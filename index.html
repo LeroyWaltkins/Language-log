@@ -64,6 +64,38 @@
   }
 
   /* Streak row */
+  .period-row{
+    display:flex;
+    align-items:center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+  }
+  .period-label{
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: var(--ink-soft);
+  }
+  .period-btn{
+    font-family: 'Inter', sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--ink-soft);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    padding: 7px 12px;
+    cursor: pointer;
+  }
+  .period-btn:hover{ background: var(--border-soft); color: var(--ink); }
+  .period-note{
+    font-size: 13.5px;
+    line-height: 1.5;
+    color: var(--ink-soft);
+    margin: 0 0 14px;
+  }
   .streaks{
     display:grid;
     grid-template-columns: repeat(4, 1fr);
@@ -382,6 +414,10 @@
   </header>
   <div id="load-status" style="display:none; font-size:13px; color: var(--ink-soft); margin: -18px 0 20px;">Loading your log…</div>
 
+  <div class="period-row">
+    <div class="period-label" id="period-label"></div>
+    <button class="period-btn" id="new-period-btn">Start new period</button>
+  </div>
   <div class="streaks">
     <div class="streak-card both">
       <div class="streak-label">German + Russian</div>
@@ -397,7 +433,7 @@
     </div>
     <div class="streak-card exercise">
       <div class="streak-label">Exercise</div>
-      <div class="streak-value" id="stat-exercise">0<span>weeks with 2+ days</span></div>
+      <div class="streak-value" id="stat-exercise">0<span>of 4 weeks with 2+ days</span></div>
     </div>
   </div>
 
@@ -420,6 +456,22 @@
       <div class="legend-item"><span class="dot russian on"></span> Russian</div>
       <div class="legend-item"><span class="dot exercise on"></span> Exercise</div>
     </div>
+  </div>
+</div>
+
+<div class="overlay" id="period-overlay">
+  <div class="panel">
+    <div class="panel-header">
+      <h3>Start a new period</h3>
+      <button class="close-btn" id="period-close-btn">✕</button>
+    </div>
+    <p class="period-note">The boxes at the top go back to zero and count 4 weeks from the date you pick. Your logged days stay in the calendar and the sheet.</p>
+    <input class="habit-input" id="period-date-input" type="date">
+    <div class="panel-footer">
+      <button class="btn" id="period-cancel-btn">Cancel</button>
+      <button class="btn primary" id="period-confirm-btn">Reset to zero</button>
+    </div>
+    <div class="save-hint" id="period-hint"></div>
   </div>
 </div>
 
@@ -499,6 +551,7 @@
       entries = {};
       status.textContent = "Couldn't load from the shared sheet. Showing an empty log — try refreshing.";
     }
+    loadPeriodStart();
     render();
   }
 
@@ -572,18 +625,57 @@
     return !!(entry && entry[habit] && entry[habit].done);
   }
 
-  // Monday of the week containing dateStr, as a yyyy-mm-dd key (weeks run Mon–Sun, matching the calendar)
-  function weekKey(dateStr){
-    const d = new Date(dateStr + 'T00:00:00');
-    const offset = (d.getDay() + 6) % 7; // Mon=0 ... Sun=6
-    d.setDate(d.getDate() - offset);
+  // ---- Tracking period -------------------------------------------------
+  // The top boxes count only days inside the current 4-week period. The start
+  // date is saved in the shared sheet (under a reserved date key) so you and
+  // your partner always see the same period. Nothing rolls over automatically:
+  // after the period ends the numbers stay frozen until you press "Start new period".
+  const DEFAULT_PERIOD_START = '2026-10-05';
+  const SETTINGS_KEY = '2000-01-01';   // reserved row that stores the period start
+  const PERIOD_DAYS = 28;
+  const DAY_MS = 86400000;
+  let periodStart = DEFAULT_PERIOD_START;
+
+  function isDateStr(s){ return typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s); }
+
+  function loadPeriodStart(){
+    const s = entries[SETTINGS_KEY] && entries[SETTINGS_KEY].german && entries[SETTINGS_KEY].german.activity;
+    periodStart = isDateStr(s) ? s : DEFAULT_PERIOD_START;
+  }
+
+  function periodEnd(){
+    const d = new Date(periodStart + 'T00:00:00');
+    d.setDate(d.getDate() + PERIOD_DAYS - 1);
     return fmt(d);
+  }
+
+  function inPeriod(dateStr){
+    return dateStr >= periodStart && dateStr <= periodEnd();
+  }
+
+  // Which 7-day block of the period (0-3) a date falls in
+  function weekKey(dateStr){
+    const a = new Date(periodStart + 'T00:00:00');
+    const b = new Date(dateStr + 'T00:00:00');
+    return Math.floor(Math.round((b - a) / DAY_MS) / 7);
+  }
+
+  function renderPeriodLabel(){
+    const opts = { month:'short', day:'numeric' };
+    const end = periodEnd();
+    const a = new Date(periodStart + 'T00:00:00').toLocaleDateString('en-US', opts);
+    const b = new Date(end + 'T00:00:00').toLocaleDateString('en-US', opts);
+    let text = 'Period: ' + a + ' – ' + b;
+    if(todayStr > end) text += ' · ended, ready to review';
+    else if(todayStr < periodStart) text += ' · not started yet';
+    document.getElementById('period-label').textContent = text;
   }
 
   function computeStats(){
     let german = 0, russian = 0, both = 0;
     const exerciseByWeek = {};
     Object.keys(entries).forEach(dateStr => {
+      if(!inPeriod(dateStr)) return;
       const e = entries[dateStr];
       const g = isDone(e, 'german');
       const r = isDone(e, 'russian');
@@ -609,6 +701,7 @@
     setStat('stat-german', s.german);
     setStat('stat-russian', s.russian);
     setStat('stat-exercise', s.exerciseWeeks);
+    renderPeriodLabel();
   }
 
   function render(){
@@ -687,6 +780,51 @@
   });
   document.addEventListener('keydown', (e) => {
     if(e.key === 'Escape' && document.getElementById('overlay').classList.contains('open')) closePanel();
+  });
+
+  // ---- New period panel ----
+  function closePeriodPanel(){
+    document.getElementById('period-overlay').classList.remove('open');
+  }
+  document.getElementById('new-period-btn').addEventListener('click', () => {
+    document.getElementById('period-date-input').value = todayStr;
+    document.getElementById('period-hint').textContent = '';
+    document.getElementById('period-overlay').classList.add('open');
+  });
+  document.getElementById('period-close-btn').addEventListener('click', closePeriodPanel);
+  document.getElementById('period-cancel-btn').addEventListener('click', closePeriodPanel);
+  document.getElementById('period-overlay').addEventListener('click', (e) => {
+    if(e.target.id === 'period-overlay') closePeriodPanel();
+  });
+  document.addEventListener('keydown', (e) => {
+    if(e.key === 'Escape') closePeriodPanel();
+  });
+  document.getElementById('period-confirm-btn').addEventListener('click', async () => {
+    const value = document.getElementById('period-date-input').value;
+    const hint = document.getElementById('period-hint');
+    const btn = document.getElementById('period-confirm-btn');
+    if(!isDateStr(value)){
+      hint.textContent = 'Pick a start date first.';
+      return;
+    }
+    hint.textContent = 'Saving...';
+    btn.disabled = true;
+    const previous = entries[SETTINGS_KEY];
+    try{
+      await saveEntry(SETTINGS_KEY, {
+        german:   { done:false, activity: value },
+        russian:  { done:false, activity: '' },
+        exercise: { done:false, activity: '' }
+      });
+      periodStart = value;
+      render();
+      closePeriodPanel();
+    }catch(err){
+      console.error('Period save failed', err);
+      if(previous) entries[SETTINGS_KEY] = previous; else delete entries[SETTINGS_KEY];
+      hint.textContent = "Couldn't save — check your connection and try again.";
+    }
+    btn.disabled = false;
   });
 
   document.getElementById('prev-btn').addEventListener('click', () => {

@@ -66,7 +66,7 @@
   /* Streak row */
   .streaks{
     display:grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(4, 1fr);
     gap: 12px;
     margin-bottom: 28px;
   }
@@ -85,6 +85,7 @@
     left:0; top:0; bottom:0;
     width: 4px;
   }
+  .streak-card.both::before{ background: linear-gradient(to bottom, var(--german) 50%, var(--russian) 50%); }
   .streak-card.german::before{ background: var(--german); }
   .streak-card.russian::before{ background: var(--russian); }
   .streak-card.exercise::before{ background: var(--exercise); }
@@ -364,9 +365,9 @@
   }
 
   @media (max-width: 480px){
-    .streaks{ grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .streaks{ grid-template-columns: repeat(2, 1fr); gap: 8px; }
     .streak-card{ padding: 12px; }
-    .streak-value{ font-size: 20px; }
+    .streak-value{ font-size: 22px; flex-wrap: wrap; }
     .day .num{ font-size: 10px; }
   }
 </style>
@@ -382,17 +383,21 @@
   <div id="load-status" style="display:none; font-size:13px; color: var(--ink-soft); margin: -18px 0 20px;">Loading your log…</div>
 
   <div class="streaks">
+    <div class="streak-card both">
+      <div class="streak-label">German + Russian</div>
+      <div class="streak-value" id="stat-both">0<span>days, same day</span></div>
+    </div>
     <div class="streak-card german">
       <div class="streak-label">German</div>
-      <div class="streak-value" id="streak-german">0<span>day streak</span></div>
+      <div class="streak-value" id="stat-german">0<span>days total</span></div>
     </div>
     <div class="streak-card russian">
       <div class="streak-label">Russian</div>
-      <div class="streak-value" id="streak-russian">0<span>day streak</span></div>
+      <div class="streak-value" id="stat-russian">0<span>days total</span></div>
     </div>
     <div class="streak-card exercise">
       <div class="streak-label">Exercise</div>
-      <div class="streak-value" id="streak-exercise">0<span>day streak</span></div>
+      <div class="streak-value" id="stat-exercise">0<span>weeks with 2+ days</span></div>
     </div>
   </div>
 
@@ -563,31 +568,47 @@
     }
   }
 
-  function computeStreak(habit){
-    let streak = 0;
-    let cursor = new Date(today);
-    // if today not done yet, start counting from yesterday (don't break streak just because today's not logged yet)
-    const todayEntry = entries[fmt(cursor)];
-    if(!todayEntry || !todayEntry[habit] || !todayEntry[habit].done){
-      cursor.setDate(cursor.getDate()-1);
-    }
-    while(true){
-      const key = fmt(cursor);
-      const e = entries[key];
-      if(e && e[habit] && e[habit].done){
-        streak++;
-        cursor.setDate(cursor.getDate()-1);
-      } else {
-        break;
+  function isDone(entry, habit){
+    return !!(entry && entry[habit] && entry[habit].done);
+  }
+
+  // Monday of the week containing dateStr, as a yyyy-mm-dd key (weeks run Mon–Sun, matching the calendar)
+  function weekKey(dateStr){
+    const d = new Date(dateStr + 'T00:00:00');
+    const offset = (d.getDay() + 6) % 7; // Mon=0 ... Sun=6
+    d.setDate(d.getDate() - offset);
+    return fmt(d);
+  }
+
+  function computeStats(){
+    let german = 0, russian = 0, both = 0;
+    const exerciseByWeek = {};
+    Object.keys(entries).forEach(dateStr => {
+      const e = entries[dateStr];
+      const g = isDone(e, 'german');
+      const r = isDone(e, 'russian');
+      if(g) german++;
+      if(r) russian++;
+      if(g && r) both++;
+      if(isDone(e, 'exercise')){
+        const wk = weekKey(dateStr);
+        exerciseByWeek[wk] = (exerciseByWeek[wk] || 0) + 1;
       }
-    }
-    return streak;
+    });
+    const exerciseWeeks = Object.values(exerciseByWeek).filter(n => n >= 2).length;
+    return { german, russian, both, exerciseWeeks };
+  }
+
+  function setStat(id, value){
+    document.getElementById(id).firstChild.textContent = value;
   }
 
   function renderStreaks(){
-    HABITS.forEach(h => {
-      document.getElementById('streak-'+h).firstChild.textContent = computeStreak(h);
-    });
+    const s = computeStats();
+    setStat('stat-both', s.both);
+    setStat('stat-german', s.german);
+    setStat('stat-russian', s.russian);
+    setStat('stat-exercise', s.exerciseWeeks);
   }
 
   function render(){
